@@ -47,7 +47,7 @@ const Navbar = () => {
             {/* Logo */}
             <div className="flex-1">
               <span className="text-xl font-bold tracking-wide text-primary">
-                Rider Delivery App
+                Angelyn's Ukay Delivery App
               </span>
             </div>
 
