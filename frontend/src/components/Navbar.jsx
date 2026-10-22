@@ -3,8 +3,8 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useUserStore } from "../stores/useUserStore";
 import {
   Home,
-  Users,
-  Truck,
+  UserPlus,
+  History,
   LogOut,
 } from "lucide-react";
 
@@ -57,7 +57,7 @@ const Navbar = () => {
                 <>
                   <Link className="btn btn-ghost btn-sm" to="/">Dashboard</Link>
                   <Link className="btn btn-ghost btn-sm" to="/customers">Customers</Link>
-                  <Link className="btn btn-ghost btn-sm" to="/delivery">Delivery</Link>
+                  <Link className="btn btn-ghost btn-sm" to="/delivery">History</Link>
                   <button
                     className="btn btn-ghost btn-sm text-error"
                     onClick={handleLogout}
@@ -103,7 +103,7 @@ const Navbar = () => {
               Customers
             </button>
             <button className="w-full text-left px-3 py-2" onClick={() => handleNavigate("/delivery")}>
-              Delivery
+              History
             </button>
             <button className="w-full text-left px-3 py-2 text-error" onClick={handleLogout}>
               Logout
@@ -132,7 +132,7 @@ const Navbar = () => {
                 isActive("/customers") ? "text-primary" : "text-base-content/60"
               }`}
             >
-              <Users size={20} />
+              <UserPlus size={20} />
               Customers
             </button>
 
@@ -142,8 +142,8 @@ const Navbar = () => {
                 isActive("/delivery") ? "text-primary" : "text-base-content/60"
               }`}
             >
-              <Truck size={20} />
-              Delivery
+              <History size={20} />
+              History
             </button>
 
             {/* <button
