@@ -80,7 +80,7 @@ const Navbar = () => {
       <header className="md:hidden sticky top-0 z-40 bg-base-100/80 backdrop-blur-md border-b">
         <div className="px-4 py-2 flex justify-between items-center">
           <span className="font-semibold text-primary">
-            Rider Delivery App
+             Angelyn's Ukay Delivery App
           </span>
 
           <button
