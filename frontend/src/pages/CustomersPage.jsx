@@ -576,7 +576,7 @@ export default function CustomersPage() {
                               setDeliveryAmount("");
                             }}
                           >
-                            <Check size={14} /> Paid (GCash / Settled)
+                            <Check size={8} /> Paid (GCash / Settled)
                           </button>
 
                           <button
@@ -587,7 +587,7 @@ export default function CustomersPage() {
                             }`}
                             onClick={() => setDeliveryPaymentType("unpaid")}
                           >
-                            <ShieldCheck size={14} /> Cash on Delivery (COD)
+                            <ShieldCheck size={8} /> Cash on Delivery (COD)
                           </button>
                         </div>
 
