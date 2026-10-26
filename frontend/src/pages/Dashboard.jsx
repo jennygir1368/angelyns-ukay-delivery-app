@@ -1,641 +1,434 @@
-// src/pages/CustomersPage.jsx
-import React, { useEffect, useRef, useState } from "react";
-import { MapPin, MapPinOff, Phone, PhoneOff, Search, UserPlus, Pencil, PackagePlus, Navigation, X, Check, ShieldCheck } from "lucide-react";
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet";
-import L from "leaflet";
-import toast, { Toaster } from "react-hot-toast";
-import { useCustomerStore } from "../stores/useCustomerStore";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import DeliveryMap from "../components/DeliveryMap";
+import DeliveryList from "../components/DeliveryList";
+import DeliveryProgress from "../components/DeliveryProgress";
+import { useDeliveryStore } from "../stores/useDeliveryStore";
+import { Navigation, Radio, MapPin, Phone, ShieldAlert, CheckCircle2, Volume2, Target } from "lucide-react";
 
-// Fix Leaflet icons
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl:
-    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-  shadowUrl:
-    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-});
+// Helper: Extractor para sa Latitude at Longitude
+const extractLatLng = (item) => {
+  if (!item) return { lat: null, lng: null };
 
-// Click map to pick location
-function MapClickPicker({ onPick }) {
-  useMapEvents({
-    click(e) {
-      onPick({ lat: e.latlng.lat, lng: e.latlng.lng });
-    },
-  });
-  return null;
-}
+  let lat = item.lat ?? item.latitude ?? item.location?.lat ?? item.location?.latitude;
+  let lng = item.lng ?? item.longitude ?? item.location?.lng ?? item.location?.longitude;
 
-// Auto-focus map on rider location
-function MapController({ riderLocation }) {
-  const map = useMapEvents({});
-  useEffect(() => {
-    if (riderLocation?.lat && riderLocation?.lng) {
-      map.setView([riderLocation.lat, riderLocation.lng], 16, { animate: true });
-    }
-  }, [riderLocation, map]);
-  return null;
-}
+  if ((lat == null || lng == null) && Array.isArray(item.location?.coordinates)) {
+    lng = item.location.coordinates[0];
+    lat = item.location.coordinates[1];
+  }
 
-// List of barangay suggestions
-const barangayOptions = [
-  "Barrio Militar",
-  "Liwayway",
-  "Mapalad",
-  "Malacañang",
-  "Patalac",
-  "Kalikid sur",
-  "Kalikid norte",
-  "Camptinio",
-  "Bangad",
-  "Bakod bayan",
-  "Cabanatuan",
-];
+  const parsedLat = parseFloat(lat);
+  const parsedLng = parseFloat(lng);
 
-export default function CustomersPage() {
-  const formRef = useRef(null);
-  const mapRef = useRef(null);
-
-  const emptyForm = {
-    name: "",
-    address: "",
-    phone: "",
-    lat: "",
-    lng: "",
-    remarks: "",
+  return {
+    lat: !isNaN(parsedLat) ? parsedLat : null,
+    lng: !isNaN(parsedLng) ? parsedLng : null,
   };
+};
 
-  const [form, setForm] = useState({ ...emptyForm });
-  const [editingId, setEditingId] = useState(null);
-  const [mapPick, setMapPick] = useState(null);
-  const [riderLocation, setRiderLocation] = useState(null); // For live GPS
-  const [query, setQuery] = useState("");
-  const [deliverForId, setDeliverForId] = useState(null);
-  const [deliveryPaymentType, setDeliveryPaymentType] = useState("paid");
-  const [deliveryAmount, setDeliveryAmount] = useState("");
-  const [saving, setSaving] = useState(false);
+// Haversine Formula para sa distansya sa metro
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return Infinity;
+  
+  const R = 6371000; // Earth radius in meters
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+      
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
 
-  // Address suggestions
-  const [filteredAddresses, setFilteredAddresses] = useState([]);
+let iosAudioCtx = null;
 
-  const { customers, fetchCustomers, addCustomer, updateCustomer, addDelivery } =
-    useCustomerStore();
+const Dashboard = () => {
+  const {
+    deliveries,
+    completedCount,
+    setDeliveries,
+    fetchDeliveries,
+  } = useDeliveryStore();
 
-  // Fetch customers
+  const [selectedDelivery, setSelectedDelivery] = useState(null);
+  const [riderLocation, setRiderLocation] = useState(null);
+  const [isTracking, setIsTracking] = useState(true);
+  const [alertedIds, setAlertedIds] = useState(new Set());
+  const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
+  const [activeProximityAlert, setActiveProximityAlert] = useState(null);
+
+  const audioAlarmRef = useRef(null);
+
+  // Initial fetch at agad na kunin ang GPS location sa unang pasok
   useEffect(() => {
-    fetchCustomers();
-  }, [fetchCustomers]);
+    fetchDeliveries();
 
-  // Update form when map is clicked
-  useEffect(() => {
-    if (mapPick) {
-      setForm((f) => ({
-        ...f,
-        lat: mapPick.lat.toFixed(6),
-        lng: mapPick.lng.toFixed(6),
-      }));
-      if (mapRef.current) {
-        mapRef.current.setView([mapPick.lat, mapPick.lng], 16);
-      }
-    }
-  }, [mapPick]);
-
-  // Function to get device GPS and update rider location
-  const handleUseMyLocation = () => {
-    if (!navigator.geolocation) return toast.error("Geolocation not supported");
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-
-        setRiderLocation({ lat, lng });
-
-        setForm((f) => ({
-          ...f,
-          lat: lat.toFixed(6),
-          lng: lng.toFixed(6),
-        }));
-
-        setMapPick({ lat, lng });
-
-        toast.success("Location detected successfully!");
-      },
-      (err) => toast.error("GPS Error: " + err.message),
-      { enableHighAccuracy: true }
-    );
-  };
-
-  // Optional: Live GPS tracking every 10 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!navigator.geolocation) return;
+    if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setRiderLocation({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
+            lat: parseFloat(pos.coords.latitude),
+            lng: parseFloat(pos.coords.longitude),
           });
         },
-        () => {},
+        (err) => console.error("Initial GPS Error:", err),
         { enableHighAccuracy: true }
       );
-    }, 10000);
+    }
+  }, [fetchDeliveries]);
 
-    return () => clearInterval(interval);
+  // Unlock iOS Safari Audio
+  const handleUnlockAudio = () => {
+    if (!iosAudioCtx) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) iosAudioCtx = new AudioContext();
+    }
+    if (iosAudioCtx && iosAudioCtx.state === "suspended") {
+      iosAudioCtx.resume();
+    }
+    
+    if (audioAlarmRef.current) {
+      audioAlarmRef.current.play().then(() => {
+        audioAlarmRef.current.pause();
+        audioAlarmRef.current.currentTime = 0;
+        setIsAudioUnlocked(true);
+      }).catch((error) => console.log("Audio unlock retry needed:", error));
+    }
+
+    if ("speechSynthesis" in window) {
+      const dummyUtterance = new SpeechSynthesisUtterance("");
+      window.speechSynthesis.speak(dummyUtterance);
+    }
+  };
+
+  const triggerAudioBeep = () => {
+    try {
+      if (!iosAudioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        iosAudioCtx = new AudioContext();
+      }
+      if (iosAudioCtx.state === "suspended") iosAudioCtx.resume();
+
+      const oscillator = iosAudioCtx.createOscillator();
+      const gainNode = iosAudioCtx.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, iosAudioCtx.currentTime);
+      gainNode.gain.setValueAtTime(0.3, iosAudioCtx.currentTime);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(iosAudioCtx.destination);
+
+      oscillator.start();
+      oscillator.stop(iosAudioCtx.currentTime + 0.6);
+    } catch (e) {
+      console.error("iOS Audio Error:", e);
+    }
+  };
+
+  // REAL-TIME GPS WATCHER & PROXIMITY TRIGGER
+  useEffect(() => {
+    let watchId;
+    if (navigator.geolocation && isTracking) {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const currentLat = parseFloat(pos.coords.latitude);
+          const currentLng = parseFloat(pos.coords.longitude);
+
+          if (!isNaN(currentLat) && !isNaN(currentLng)) {
+            setRiderLocation({ lat: currentLat, lng: currentLng });
+          }
+
+          // Proximity check para sa pop-up
+          if (deliveries && deliveries.length > 0) {
+            deliveries.forEach((item) => {
+              const { lat: itemLat, lng: itemLng } = extractLatLng(item);
+
+              if (itemLat != null && itemLng != null) {
+                const dist = calculateDistance(currentLat, currentLng, itemLat, itemLng);
+
+                if (dist <= 150 && !alertedIds.has(item._id) && item.status !== "completed") {
+                  if (audioAlarmRef.current) {
+                    audioAlarmRef.current.play().catch(e => console.log("Audio play blocked", e));
+                  }
+                  triggerAudioBeep();
+
+                  if ("speechSynthesis" in window) {
+                    const utterance = new SpeechSynthesisUtterance(
+                      `Malapit ka na kay ${item.customerName || item.name || "Customer"}. Ihanda ang parcel.`
+                    );
+                    utterance.lang = "tl-PH";
+                    window.speechSynthesis.speak(utterance);
+                  }
+
+                  setActiveProximityAlert({ ...item, distanceMeters: dist });
+                  setAlertedIds((prev) => new Set(prev).add(item._id));
+                }
+              }
+            });
+          }
+        },
+        (err) => console.error("GPS Tracking Error:", err),
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+      );
+    }
+
+    return () => {
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+    };
+  }, [isTracking, deliveries, alertedIds]);
+
+  // 🎯 STRICT REAL-TIME DISTANCE SORTING (Inuuna ang pinakamalapit sa rider)
+  const sortedDeliveries = useMemo(() => {
+    if (!deliveries) return [];
+
+    const activeDeliveries = deliveries.filter(
+      (item) => item.status !== "completed" && item.status !== "returned"
+    );
+
+    return [...activeDeliveries]
+      .map((item) => {
+        const { lat: itemLat, lng: itemLng } = extractLatLng(item);
+        const hasValidCoords = itemLat != null && itemLng != null;
+
+        let distanceMeters = Infinity;
+        if (hasValidCoords && riderLocation?.lat != null && riderLocation?.lng != null) {
+          distanceMeters = calculateDistance(
+            riderLocation.lat,
+            riderLocation.lng,
+            itemLat,
+            itemLng
+          );
+        }
+
+        return {
+          ...item,
+          lat: itemLat,
+          lng: itemLng,
+          distanceMeters,
+          hasValidCoords,
+        };
+      })
+      .sort((a, b) => {
+        if (a.hasValidCoords && b.hasValidCoords) {
+          return a.distanceMeters - b.distanceMeters; // Pinakamalapit ang mauuna
+        }
+        if (a.hasValidCoords && !b.hasValidCoords) return -1;
+        if (!a.hasValidCoords && b.hasValidCoords) return 1;
+        return 0;
+      });
+  }, [deliveries, riderLocation]);
+
+  const openExternalNavigation = (lat, lng) => {
+    if (lat && lng) {
+      window.open(`https://maps.apple.com/?daddr=${lat},${lng}`, "_blank");
+    }
+  };
+
+  const handleRecenter = useCallback(() => {
+    handleUnlockAudio();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        setRiderLocation({
+          lat: parseFloat(pos.coords.latitude),
+          lng: parseFloat(pos.coords.longitude),
+        });
+      });
+    }
   }, []);
 
-  // Submit Form
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const markAsDelivered = (deliveryId, paymentType) => {
+    const found = deliveries.find((d) => d._id === deliveryId);
+    if (!found) return;
 
-    const actionLabel = editingId ? "update this customer" : "add this customer";
-
-    const confirmed = window.confirm(
-      `Are you sure you want to ${actionLabel}?`
-    );
-
-    if (!confirmed) return;
-
-    setSaving(true);
-
-    const payload = {
-      ...form,
-      lat: Number(form.lat),
-      lng: Number(form.lng),
+    const deliveredItem = {
+      ...found,
+      status: "completed",
+      deliveredAt: new Date().toISOString(),
+      paymentType,
     };
 
-    if (editingId) {
-      payload.customerId = editingId;
-      await updateCustomer(payload);
-      setEditingId(null);
-    } else {
-      await addCustomer(payload);
-    }
-
-    setForm(emptyForm);
-    setMapPick(null);
-    setSaving(false);
-  };
-
-  // Pre-fill edit fields
-  const startEdit = (c) => {
-    setEditingId(c._id);
-    setForm({
-      name: String(c.name ?? ""),
-      address: String(c.address ?? ""),
-      phone: String(c.phone ?? ""),
-      lat: c.lat != null ? String(c.lat) : "",
-      lng: c.lng != null ? String(c.lng) : "",
-      remarks: String(c.remarks ?? ""),
-    });
-
-    if (c.lat && c.lng && mapRef.current) {
-      mapRef.current.setView([c.lat, c.lng], 16);
-    }
-
-    formRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  // Filter suggestions as user types
-  const handleAddressChange = (value) => {
-    setForm((f) => ({ ...f, address: value }));
-
-    if (!value) {
-      setFilteredAddresses([]);
-      return;
-    }
-
-    const filtered = barangayOptions.filter((b) =>
-      b.toLowerCase().includes(value.toLowerCase())
+    setDeliveries(
+      deliveries.map((d) => (d._id === deliveryId ? deliveredItem : d))
     );
-    setFilteredAddresses(filtered);
-  };
-
-  // Search filter
-  const filtered = customers.filter((c) => {
-    const s = query.toLowerCase();
-    return (
-      (c.name || "").toLowerCase().includes(s) ||
-      (c.address || "").toLowerCase().includes(s) ||
-      String(c.phone || "").toLowerCase().includes(s)
-    );
-  });
-
-  // Confirm delivery
-  const confirmDelivery = async (cust) => {
-    if (!deliveryPaymentType) {
-      return toast.error("Select payment status");
-    }
-
-    const actionLabel =
-      deliveryPaymentType === "paid"
-        ? "mark this delivery as PAID"
-        : "create a Cash on delivery";
-
-    const confirmed = window.confirm(
-      `Are you sure you want to ${actionLabel}?`
-    );
-
-    if (!confirmed) return;
-
-    let amount = 0;
-
-    if (deliveryPaymentType === "unpaid") {
-      if (
-        !deliveryAmount ||
-        isNaN(deliveryAmount) ||
-        Number(deliveryAmount) <= 0
-      ) {
-        return toast.error("Please input a valid amount for unpaid delivery");
-      }
-      amount = Number(deliveryAmount);
-    }
-
-    await addDelivery({
-      customerId: cust._id,
-      paid: deliveryPaymentType === "paid",
-      amount,
-    });
-
-    setDeliveryPaymentType("");
-    setDeliveryAmount("");
-    setDeliverForId(null);
+    setActiveProximityAlert(null);
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto p-3 sm:p-6 pb-28">
-      
-      {/* Top Header Banner */}
-      <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-5 rounded-3xl border border-primary/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-2 text-base-content">
-            <UserPlus className="text-primary" size={28} />
-            Receiver Management
-          </h1>
-          <p className="text-xs sm:text-sm text-base-content/70 mt-1">
-            Register delivery destinations, pin map locations, and dispatch orders quickly.
-          </p>
+    <main 
+      onClick={handleUnlockAudio} 
+      className="p-3 sm:p-6 max-w-7xl mx-auto space-y-5 relative pb-28"
+    >
+      <audio 
+        ref={audioAlarmRef} 
+        src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" 
+        preload="auto" 
+      />
+
+      {/* iOS Audio Activation Banner */}
+      {!isAudioUnlocked && (
+        <div className="bg-primary/10 border border-primary/30 text-primary p-3 rounded-2xl text-xs flex justify-between items-center shadow-md animate-pulse">
+          <span className="flex items-center gap-2 font-bold">
+            <Volume2 size={16} /> Tap anywhere to enable iPhone audio & voice alerts
+          </span>
+          <button onClick={handleUnlockAudio} className="btn btn-xs btn-primary rounded-xl px-3 font-bold">
+            Enable Audio
+          </button>
         </div>
-        <div className="badge badge-primary badge-outline font-mono text-xs px-3 py-2 font-bold">
-          Total Receivers: {customers.length}
+      )}
+
+      {/* Header Status Bar (Rider App Vibe) */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-base-100 p-4 sm:p-5 rounded-3xl border border-base-200 shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-primary/10 text-primary rounded-2xl flex items-center justify-center shrink-0">
+            <Radio size={24} className="animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`relative flex h-2.5 w-2.5`}>
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isTracking ? 'bg-success' : 'bg-warning'} opacity-75`}></span>
+                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isTracking ? 'bg-success' : 'bg-warning'}`}></span>
+              </span>
+              <h1 className="text-lg font-black tracking-tight">Rider Smart Dispatch Radar</h1>
+            </div>
+            <p className="text-xs text-base-content/60">Live proximity tracking & automated nearest-route queue</p>
+          </div>
         </div>
+
+        <button
+          onClick={() => {
+            handleUnlockAudio();
+            setIsTracking(!isTracking);
+          }}
+          className={`btn btn-sm rounded-xl font-bold gap-2 normal-case px-4 ${isTracking ? 'btn-success text-white shadow-md shadow-success/20' : 'btn-warning text-white'}`}
+        >
+          {isTracking ? "🟢 Live GPS Radar Active" : "⏸️ Tracking Paused"}
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* LEFT COLUMN: FORM & MAP PICKER */}
-        <div className="lg:col-span-5 space-y-6">
-          
-          {/* FORM CARD */}
-          <div ref={formRef} className="card bg-base-100 border border-base-200 shadow-xl p-5 sm:p-6 rounded-3xl">
-            <div className="flex justify-between items-center mb-4 border-b border-base-200 pb-3">
-              <h3 className="font-black text-lg flex items-center gap-2">
-                {editingId ? <Pencil size={18} className="text-warning" /> : <UserPlus size={18} className="text-primary" />}
-                {editingId ? "Edit Receiver Details" : "Add New Receiver"}
-              </h3>
-              {editingId && (
-                <span className="badge badge-warning badge-sm font-bold text-white">Editing Mode</span>
-              )}
-            </div>
+      <DeliveryProgress
+        total={deliveries.length + completedCount}
+        completed={completedCount}
+      />
 
-            <form className="space-y-4" onSubmit={handleSubmit}>
-              <div>
-                <label className="label text-xs font-bold uppercase tracking-wider text-base-content/70">Receiver Name</label>
-                <input
-                  className="input input-bordered w-full rounded-xl text-sm font-medium"
-                  placeholder="e.g. Juan Dela Cruz"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  required
-                />
-              </div>
+      {/* Map Section */}
+      <section className="space-y-3">
+        <div className="flex justify-between items-center px-1">
+          <h2 className="text-base sm:text-lg font-black tracking-tight flex items-center gap-2">
+            <Navigation className="text-primary" size={20} /> Live Route Radar
+          </h2>
+          <button
+            className="btn btn-sm btn-primary rounded-xl px-4 gap-1.5 font-bold shadow-md shadow-primary/20"
+            onClick={handleRecenter}
+          >
+            <Target size={15} /> Recenter GPS
+          </button>
+        </div>
 
-              {/* Address input with suggestions */}
-              <div className="relative">
-                <label className="label text-xs font-bold uppercase tracking-wider text-base-content/70">Delivery Address / Barangay</label>
-                <input
-                  className="input input-bordered w-full rounded-xl text-sm font-medium"
-                  placeholder="e.g. Mapalad, Santa Rosa"
-                  value={form.address}
-                  onChange={(e) => handleAddressChange(e.target.value)}
-                  required
-                />
-                {filteredAddresses.length > 0 && (
-                  <div className="absolute z-20 bg-base-100 border border-base-200 w-full mt-1 rounded-2xl shadow-xl overflow-hidden">
-                    {filteredAddresses.map((b) => (
-                      <div
-                        key={b}
-                        className="px-4 py-2.5 cursor-pointer hover:bg-primary/10 text-sm font-medium transition-colors"
-                        onClick={() => {
-                          setForm((f) => ({ ...f, address: b }));
-                          setFilteredAddresses([]);
-                        }}
-                      >
-                        📍 {b}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+        <div className="relative z-0 rounded-3xl overflow-hidden border border-base-200 shadow-xl">
+          <DeliveryMap
+            deliveries={sortedDeliveries}
+            selectedDelivery={selectedDelivery}
+            riderLocation={riderLocation}
+          />
+        </div>
+      </section>
 
-              <div>
-                <label className="label text-xs font-bold uppercase tracking-wider text-base-content/70">Contact Number</label>
-                <input
-                  className="input input-bordered w-full rounded-xl text-sm font-medium"
-                  placeholder="09123456789"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                />
-              </div>
-
-              {/* Coordinates Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                <div>
-                  <label className="label text-[10px] font-bold uppercase text-base-content/60">Latitude</label>
-                  <input
-                    className="input input-bordered input-sm w-full rounded-lg text-xs font-mono bg-base-200/50"
-                    placeholder="Lat"
-                    disabled
-                    value={form.lat}
-                  />
-                </div>
-                <div>
-                  <label className="label text-[10px] font-bold uppercase text-base-content/60">Longitude</label>
-                  <input
-                    className="input input-bordered input-sm w-full rounded-lg text-xs font-mono bg-base-200/50"
-                    placeholder="Lng"
-                    disabled
-                    value={form.lng}
-                  />
-                </div>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-primary w-full rounded-lg gap-1 font-bold text-white shadow-sm"
-                    onClick={handleUseMyLocation}
-                  >
-                    <Navigation size={13} /> GPS Pin
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="label text-xs font-bold uppercase tracking-wider text-base-content/70">Landmark / Remarks</label>
-                <input
-                  className="input input-bordered w-full rounded-xl text-sm font-medium"
-                  placeholder="e.g. Malapit sa puting gate / Tapat ng tindahan"
-                  value={form.remarks}
-                  onChange={(e) => setForm({ ...form, remarks: e.target.value })}
-                />
-              </div>
-
-              <div className="pt-2 space-y-2">
-                <button
-                  className="btn btn-primary w-full rounded-xl font-bold shadow-lg shadow-primary/20 text-base normal-case"
-                  type="submit"
-                  disabled={saving}
-                >
-                  {saving
-                    ? editingId
-                      ? "Updating Receiver..."
-                      : "Saving Receiver..."
-                    : editingId
-                    ? "Update Receiver"
-                    : "Save Receiver"}
-                </button>
-
-                {editingId && (
-                  <button
-                    type="button"
-                    className="btn btn-outline w-full rounded-xl font-medium"
-                    onClick={() => {
-                      setForm(emptyForm);
-                      setEditingId(null);
-                      setMapPick(null);
-                      setFilteredAddresses([]);
-                    }}
-                  >
-                    Cancel Edit
-                  </button>
-                )}
-              </div>
-            </form>
+      {/* Queue Section */}
+      <section className="space-y-3">
+        <div className="flex justify-between items-center px-1">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-black tracking-tight">
+              Deliveries Queue
+            </h2>
+            <span className="badge badge-primary font-mono text-xs font-bold px-2.5 py-2">
+              {sortedDeliveries.length} Active
+            </span>
           </div>
+          <span className="text-[11px] font-mono badge badge-ghost font-bold text-primary">
+            ⚡ Auto-Sorted by Nearest
+          </span>
+        </div>
 
-          {/* MAP PICKER CARD */}
-          <div className="card bg-base-100 border border-base-200 shadow-xl p-4 sm:p-5 rounded-3xl">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="font-bold text-sm flex items-center gap-1.5 text-base-content/80">
-                <MapPin size={16} className="text-primary" /> Pin Location on Map
-              </h3>
-              <span className="text-[11px] text-base-content/50 italic">Click anywhere to select pin</span>
-            </div>
-            <div className="relative z-0 rounded-2xl overflow-hidden border border-base-200 shadow-inner">
-              <MapContainer
-                center={
-                  form.lat && form.lng
-                    ? [Number(form.lat), Number(form.lng)]
-                    : [15.484995, 121.086929]
-                }
-                zoom={14}
-                className="w-full h-72 rounded-2xl"
-                whenCreated={(map) => (mapRef.current = map)}
+        <DeliveryList
+          deliveries={sortedDeliveries}
+          onSelectDelivery={(d) => {
+            handleUnlockAudio();
+            setSelectedDelivery(d);
+          }}
+          onMarkDelivered={markAsDelivered}
+          onDeliveriesUpdate={setDeliveries}
+        />
+      </section>
+
+      {/* 🚨 PROXIMITY POP-UP MODAL */}
+      {activeProximityAlert && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-base-100 border-2 border-primary w-full max-w-lg rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-center border-b border-base-200 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="badge badge-error animate-pulse text-white font-black text-xs px-3 py-2">
+                  🚨 NEARBY DROP-OFF
+                </span>
+                <span className="text-xs font-mono font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-lg">
+                  {Math.round(activeProximityAlert.distanceMeters || 100)}m Away
+                </span>
+              </div>
+              <button
+                onClick={() => setActiveProximityAlert(null)}
+                className="btn btn-sm btn-circle btn-ghost"
               >
-                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                <MapClickPicker onPick={setMapPick} />
-                <MapController riderLocation={riderLocation || mapPick} />
-
-                {form.lat && form.lng && (
-                  <Marker position={[Number(form.lat), Number(form.lng)]}>
-                    <Popup>Selected Destination Pin</Popup>
-                  </Marker>
-                )}
-              </MapContainer>
+                ✕
+              </button>
             </div>
-          </div>
 
-        </div>
-
-        {/* RIGHT COLUMN: CUSTOMER LIST & DISPATCH */}
-        <div className="lg:col-span-7 space-y-4">
-          
-          <div className="card bg-base-100 border border-base-200 shadow-xl p-4 sm:p-6 rounded-3xl space-y-4">
-            
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-              <h3 className="font-black text-xl flex items-center gap-2">
-                Receivers Directory 
-                <span className="badge badge-neutral badge-sm font-mono">{filtered.length}</span>
+            <div className="space-y-1.5 bg-base-200/50 p-4 rounded-2xl border border-base-200">
+              <h3 className="text-xl font-black text-base-content">
+                {activeProximityAlert.customerName || activeProximityAlert.name || "Customer Name"}
               </h3>
-
-              {/* Search Bar */}
-              <div className="relative w-full sm:w-72">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base-content/40" size={16} />
-                <input
-                  className="input input-bordered input-sm w-full pl-10 rounded-xl text-sm font-medium"
-                  placeholder="Search name, address, phone..."
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </div>
+              <p className="text-sm text-base-content/80 flex items-center gap-1.5 font-medium">
+                <MapPin size={15} className="text-primary shrink-0" /> {activeProximityAlert.address || "Address unavailable"}
+              </p>
+              <p className="text-xs text-primary font-bold pt-1">
+                📦 Parcel Details: {activeProximityAlert.parcelDetails || "Standard Package"}
+              </p>
             </div>
 
-            {/* Customers Grid */}
-            <div className="grid gap-3 grid-cols-1">
-              {filtered.length === 0 ? (
-                <div className="text-center py-12 bg-base-200/50 rounded-2xl border border-dashed border-base-300">
-                  <p className="text-sm font-medium text-base-content/60">No receivers found matching your search.</p>
-                </div>
-              ) : (
-                filtered.map((c) => (
-                  <div key={c._id} className="card bg-base-100 border border-base-200/80 shadow-sm hover:shadow-md transition-all rounded-2xl p-4 space-y-3">
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                      
-                      <div className="space-y-1">
-                        {/* NAME + LOCATION STATUS */}
-                        <div className="font-black text-base flex items-center gap-2">
-                          {c.name}
-                          {Number(c.lat) === 15.484995 && Number(c.lng) === 121.086929 ? (
-                            <span className="badge badge-error badge-outline badge-xs gap-1 font-medium">
-                              <MapPinOff size={10} /> No Pin
-                            </span>
-                          ) : (
-                            <span className="badge badge-success badge-outline badge-xs gap-1 font-medium">
-                              <MapPin size={10} /> Pinned
-                            </span>
-                          )}
-                        </div>
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                onClick={() => {
+                  const { lat, lng } = extractLatLng(activeProximityAlert);
+                  openExternalNavigation(lat, lng);
+                }}
+                className="btn btn-outline btn-primary btn-sm rounded-xl gap-1.5 font-bold h-11"
+              >
+                🗺️ Open Maps
+              </button>
 
-                        {/* ADDRESS */}
-                        <div className="text-xs flex items-center gap-1.5 text-base-content/70 font-medium">
-                          <MapPin size={13} className="text-primary shrink-0" />
-                          <span>{c.address || "No address provided"}</span>
-                        </div>
-
-                        {/* PHONE */}
-                        <div className="text-xs flex items-center gap-1.5 text-base-content/60">
-                          {c.phone ? (
-                            <>
-                              <Phone size={13} className="text-success shrink-0" />
-                              <span className="font-mono">{c.phone}</span>
-                            </>
-                          ) : (
-                            <>
-                              <PhoneOff size={13} className="text-base-content/30 shrink-0" />
-                              <span className="italic text-base-content/40">No phone number</span>
-                            </>
-                          )}
-                        </div>
-
-                        {/* REMARKS */}
-                        {c.remarks && (
-                          <div className="text-xs mt-1 italic bg-base-200/60 px-2.5 py-1 rounded-lg text-base-content/70 border border-base-200">
-                            📝 {c.remarks}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* ACTION BUTTONS */}
-                      <div className="flex sm:flex-col gap-2 w-full sm:w-auto shrink-0">
-                        <button className="btn btn-sm btn-outline rounded-xl gap-1 flex-1 sm:flex-none font-medium" onClick={() => startEdit(c)}>
-                          <Pencil size={14} /> Edit
-                        </button>
-
-                        <button
-                          className="btn btn-sm btn-primary rounded-xl gap-1 flex-1 sm:flex-none font-bold text-white shadow-sm"
-                          onClick={() => setDeliverForId(c._id)}
-                        >
-                          <PackagePlus size={14} /> Deliver
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* DELIVER DISPATCH ACCORDION BOX */}
-                    {deliverForId === c._id && (
-                      <div className="mt-3 p-4 bg-base-200/70 border border-base-300 rounded-2xl space-y-3 animate-in fade-in duration-200">
-                        <div className="flex justify-between items-center">
-                          <span className="font-bold text-xs uppercase tracking-wider text-base-content/70">Payment Status & Dispatch</span>
-                          <button 
-                            className="btn btn-xs btn-circle btn-ghost" 
-                            onClick={() => setDeliverForId(null)}
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
-
-                        {/* SEGMENTED BUTTONS */}
-                        <div className="join w-full shadow-xs">
-                          <button
-                            className={`btn btn-sm join-item flex-1 font-bold ${
-                              deliveryPaymentType === "paid"
-                                ? "btn-success text-white"
-                                : "btn-outline border-base-300"
-                            }`}
-                            onClick={() => {
-                              setDeliveryPaymentType("paid");
-                              setDeliveryAmount("");
-                            }}
-                          >
-                            <Check size={14} /> Paid (GCash / Settled)
-                          </button>
-
-                          <button
-                            className={`btn btn-sm join-item flex-1 font-bold ${
-                              deliveryPaymentType === "unpaid"
-                                ? "btn-primary text-white"
-                                : "btn-outline border-base-300"
-                            }`}
-                            onClick={() => setDeliveryPaymentType("unpaid")}
-                          >
-                            <ShieldCheck size={14} /> Cash on Delivery (COD)
-                          </button>
-                        </div>
-
-                        {/* AMOUNT INPUT */}
-                        {deliveryPaymentType === "unpaid" && (
-                          <div className="relative">
-                            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-base-content/50">₱</span>
-                            <input
-                              type="number"
-                              className="input input-bordered input-sm pl-8 w-full rounded-xl font-bold"
-                              placeholder="Enter collection amount (e.g. 350)"
-                              value={deliveryAmount}
-                              onChange={(e) => setDeliveryAmount(e.target.value)}
-                            />
-                          </div>
-                        )}
-
-                        {/* ACTION BUTTONS */}
-                        <div className="flex justify-end gap-2 pt-1">
-                          <button
-                            className="btn btn-sm btn-ghost rounded-xl font-medium"
-                            onClick={() => setDeliverForId(null)}
-                          >
-                            Cancel
-                          </button>
-
-                          <button
-                            className="btn btn-sm btn-primary rounded-xl px-5 font-bold text-white shadow-md"
-                            onClick={() => confirmDelivery(c)}
-                            disabled={!deliveryPaymentType}
-                          >
-                            Confirm Dispatch 🚀
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
+              <a
+                href={`tel:${activeProximityAlert.phone || ""}`}
+                className="btn btn-outline btn-secondary btn-sm rounded-xl gap-1.5 font-bold h-11"
+              >
+                <Phone size={15} /> Call Customer
+              </a>
             </div>
 
+            <button
+              onClick={() => markAsDelivered(activeProximityAlert._id, "COD")}
+              className="btn btn-success btn-block rounded-xl text-white font-bold text-base shadow-lg shadow-success/20 h-12 normal-case gap-2"
+            >
+              <CheckCircle2 size={20} /> Mark as Delivered (Cash / GCash)
+            </button>
           </div>
-
         </div>
-
-      </div>
-
-      <Toaster position="bottom-center" />
-    </div>
+      )}
+    </main>
   );
-}
+};
+
+export default Dashboard;
