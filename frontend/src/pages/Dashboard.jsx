@@ -346,9 +346,9 @@ const Dashboard = () => {
             <h2 className="text-base sm:text-lg font-black tracking-tight">
               Deliveries Queue
             </h2>
-            <span className="badge badge-primary font-mono text-xs font-bold px-2.5 py-2">
+            {/* <span className="badge badge-primary font-mono text-xs font-bold px-2.5 py-2">
               {sortedDeliveries.length} Active
-            </span>
+            </span> */}
           </div>
           <span className="text-[11px] font-mono badge badge-ghost font-bold text-primary">
             ⚡ Auto-Sorted by Nearest
