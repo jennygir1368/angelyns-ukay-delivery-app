@@ -566,7 +566,8 @@ export default function CustomersPage() {
                         {/* SEGMENTED BUTTONS */}
                         <div className="join w-full shadow-xs">
                           <button
-                            className={`btn btn-sm join-item flex-1 font-bold ${
+                            type="button"
+                            className={`btn h-auto py-2.5 px-1 join-item flex-1 flex flex-col sm:flex-row items-center justify-center gap-1 text-xs font-bold leading-tight ${
                               deliveryPaymentType === "paid"
                                 ? "btn-success text-white"
                                 : "btn-outline border-base-300"
@@ -576,18 +577,21 @@ export default function CustomersPage() {
                               setDeliveryAmount("");
                             }}
                           >
-                            <Check size={8} /> Paid (GCash / Settled)
+                            <Check size={15} className="shrink-0" />
+                            <span className="text-center">Paid <span className="hidden sm:inline">(GCash / Settled)</span></span>
                           </button>
-
+                        
                           <button
-                            className={`btn btn-sm join-item flex-1 font-bold ${
+                            type="button"
+                            className={`btn h-auto py-2.5 px-1 join-item flex-1 flex flex-col sm:flex-row items-center justify-center gap-1 text-xs font-bold leading-tight ${
                               deliveryPaymentType === "unpaid"
                                 ? "btn-primary text-white"
                                 : "btn-outline border-base-300"
                             }`}
                             onClick={() => setDeliveryPaymentType("unpaid")}
                           >
-                            <ShieldCheck size={8} /> Cash on Delivery (COD)
+                            <ShieldCheck size={15} className="shrink-0" />
+                            <span className="text-center">COD <span className="hidden sm:inline">(Cash on Delivery)</span></span>
                           </button>
                         </div>
 
