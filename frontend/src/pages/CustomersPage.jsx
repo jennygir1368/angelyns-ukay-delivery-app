@@ -619,7 +619,7 @@ export default function CustomersPage() {
                           </button>
 
                           <button
-                            className="btn btn-sm btn-primary rounded-xl px-5 font-bold text-white shadow-md"
+                            className="btn btn-xs h-9 sm:h-8 sm:btn-sm btn-primary rounded-xl px-3 sm:px-5 font-black text-[11px] sm:text-xs text-white shadow-md normal-case tracking-tight whitespace-nowrap"
                             onClick={() => confirmDelivery(c)}
                             disabled={!deliveryPaymentType}
                           >
