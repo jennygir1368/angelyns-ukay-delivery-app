@@ -295,7 +295,7 @@ export default function CustomersPage() {
                 {editingId ? "Edit Receiver Details" : "Add New Receiver"}
               </h3>
               {editingId && (
-                <span className="badge badge-warning badge-sm font-bold text-white">Editing Mode</span>
+                <span className="badge badge-warning badge-sm text-white">Editing Mode</span>
               )}
             </div>
 
